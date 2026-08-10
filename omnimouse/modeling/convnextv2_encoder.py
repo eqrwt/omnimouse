@@ -2,8 +2,8 @@
 ConvNeXtV2 video encoder — a drop-in alternative to the Hiera backbone.
 
 Design goals (so it plugs into the existing `HieraFeatureExtractor` unchanged):
-- Keep the SAME Conv3d patch-embed geometry as Hiera (kernel (6,7,7), stride (2,2,2),
-  padding (2,1,3)). This is the ONLY temporal mixing, so each output token keeps a
+- Keep the SAME Conv3d patch-embed geometry as Hiera (kernel/stride/padding are taken from the same
+  `patch_kernel`/`patch_stride`/`patch_padding` kwargs). This is the ONLY temporal mixing, so each output token keeps a
   fixed 6-frame (0.2s) temporal receptive field — the contract the fusion stack relies on.
 - ConvNeXtV2 blocks operate PER-FRAME in 2D (depthwise conv + GRN), so they never mix
   across time. This isolates the comparison to "local spatial attention (Hiera) vs
