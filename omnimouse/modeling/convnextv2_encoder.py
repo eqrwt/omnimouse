@@ -153,9 +153,10 @@ class ConvNeXtV2(nn.Module):
         depth = sum(stages)
         dpr = [x.item() for x in torch.linspace(0, drop_path_rate, depth)]
 
-        # spatial 2x2 downsample stride (drop the temporal dim of q_stride)
-        spatial_stride = q_stride[-1] if len(q_stride) == 1 else q_stride[-2]  # 2
-
+        # spatial downsample stride (drop the temporal dim of q_stride)
+        spatial_stride = (
+            (q_stride[-2], q_stride[-1]) if len(q_stride) > 1 else (q_stride[0], q_stride[0])
+        )
         self.blocks = nn.ModuleList()
         self.downsamples = nn.ModuleList()
         dim = embed_dim
