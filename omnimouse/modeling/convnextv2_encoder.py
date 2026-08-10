@@ -93,11 +93,14 @@ class _Downsample(nn.Module):
 
     def __init__(self, dim_in, dim_out, stride, norm_eps=1e-6):
         super().__init__()
-        self.norm = nn.GroupNorm(1, dim_in, eps=norm_eps)  # LayerNorm over channels (channels-first)
+        self.norm = nn.LayerNorm(dim_in, eps=norm_eps)  # LayerNorm over channels (channels-last)
         self.reduction = nn.Conv2d(dim_in, dim_out, kernel_size=stride, stride=stride)
 
     def forward(self, x):
-        return self.reduction(self.norm(x))
+        x = x.permute(0, 2, 3, 1)
+        x = self.norm(x)
+        x = x.permute(0, 3, 1, 2)
+        return self.reduction(x)
 
 
 class _PatchEmbed3D(nn.Module):
