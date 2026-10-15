@@ -108,6 +108,12 @@ def get_dataset_list(list_name: str):
         ImportError: If the specified modules themselves cannot be imported (this error
                      will propagate from importlib.import_module).
     """
+    # Already resolved? Hydra hands us a ListConfig/list when a config inlines the session
+    # names instead of naming a collection. Return it unchanged so callers need no isinstance
+    # guard -- `setup_dataloaders` (multi-rank) has three unguarded call sites.
+    if not isinstance(list_name, str):
+        return list(list_name) if isinstance(list_name, (list, tuple)) else list_name
+
     # List of module names to check, in order of priority
     module_names_to_check = [
         'omnimouse.experiments.sandbox',
