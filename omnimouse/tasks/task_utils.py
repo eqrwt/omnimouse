@@ -563,8 +563,31 @@ def create_optimizers(cfg, model) -> Tuple[Optimizer, Optimizer]:
 
     base_opt_fn = hydra.utils.instantiate(cfg.trainer.optimizer)
 
-    # Shared optimizer with base settings
-    shared_optimizer = base_opt_fn(model.shared_named_parameters())
+    # Shared optimizer with base settings.
+    # `trainer.encoder_lr` (default null) optionally puts the video encoder in its own param
+    # group at a different LR -- the "discriminative learning rate" setting, which lets a
+    # pretrained encoder adapt slowly instead of being either frozen or overwritten. The
+    # `hiera.` prefix covers the encoder for BOTH the Hiera and ConvNeXtV2 backbones (the
+    # attribute is named `hiera` either way).
+    encoder_lr = cfg.trainer.get("encoder_lr")
+    if encoder_lr is None:
+        shared_optimizer = base_opt_fn(model.shared_named_parameters())
+    else:
+        encoder_params, other_params = [], []
+        for _n, _p in model.shared_named_parameters():
+            (encoder_params if _n.startswith("hiera.") else other_params).append(_p)
+        if not encoder_params:
+            raise ValueError(
+                "trainer.encoder_lr is set but no parameters match the 'hiera.' prefix; "
+                "the video encoder is absent or has been renamed."
+            )
+        log.info(
+            f"Discriminative LR: {len(encoder_params)} encoder tensors at lr={encoder_lr}, "
+            f"{len(other_params)} other shared tensors at lr={cfg.trainer.optimizer.lr}"
+        )
+        shared_optimizer = base_opt_fn(
+            [{"params": encoder_params, "lr": encoder_lr}, {"params": other_params}]
+        )
 
     # Rank optimizer with conditional overrides
     rank_cfg = OmegaConf.create(cfg.trainer.optimizer)

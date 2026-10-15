@@ -468,7 +468,11 @@ def train(cfg: DictConfig, logger: Optional[Logger] = None, **kwargs):
             # ... step shared scheduler
             shared_scheduler.step()
             # ... update latest learning rates (for logging)
-            shared_lr = shared_scheduler.get_last_lr()[0]
+            shared_lrs = shared_scheduler.get_last_lr()
+            shared_lr = shared_lrs[0]
+            # With trainer.encoder_lr set, the video encoder is a second param group; without
+            # this, its LR would never appear in the run record.
+            encoder_lr_now = shared_lrs[1] if len(shared_lrs) > 1 else None
             # -------- Update trackers after step --------
 
             # Update running lossess
@@ -565,6 +569,9 @@ def train(cfg: DictConfig, logger: Optional[Logger] = None, **kwargs):
                     f"rank_{rank}/rank_lr": rank_lr,
                     f"rank_{rank}/shared_lr": shared_lr,
                 }
+                # Second shared param group exists only when trainer.encoder_lr is set.
+                if encoder_lr_now is not None:
+                    current_lr[f"rank_{rank}/encoder_lr"] = encoder_lr_now
                 # Gather latest learning rates across ranks to rank 0
                 combined_lr_rank_0 = gather_validation_metrics(
                     current_lr, rank, world_size
