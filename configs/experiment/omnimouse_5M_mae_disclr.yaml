@@ -1,0 +1,23 @@
+# @package _global_
+
+# OmniMouse-5M with an MAE-pretrained Hiera video encoder, fine-tuned end to end with a
+# 10x lower learning rate on the encoder ("discriminative LR"). See docs/VIDEO_ENCODER.md.
+#
+#   uv run train experiment=omnimouse_5M_mae_disclr model.hiera_init_ckpt=<path>/best_encoder.pt
+#
+# The encoder checkpoint must come from pretraining/mae with the same encoder shape as
+# below (hiera_stages [2, 2], embed dim 128); a different depth loads only the matching
+# blocks and leaves the rest randomly initialized.
+
+defaults:
+  - omnimouse_5M
+  - _self_
+
+paths:
+  run_name: omnimouse_5M_mae_disclr
+
+model:
+  hiera_init_ckpt: ???  # required: MAE encoder weights
+
+trainer:
+  encoder_lr: 7.e-5  # 10x below trainer.optimizer.lr (7e-4)

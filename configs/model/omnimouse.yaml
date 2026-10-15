@@ -79,6 +79,8 @@ hiera_patch_padding: [2, 1, 3]
 hiera_sep_pos_embed: true
 hiera_drop_path_rate: 0.25
 hiera_mlp_ratio: 2.67
+hiera_init_ckpt: null  # pretrained video-encoder weights, e.g. MAE best_encoder.pt (null = random init)
+freeze_hiera: false    # freeze the video encoder (frozen-encoder ablations)
 flex_attn_block_size: 128
 flex_attention_compile_config:
   fullgraph: false
