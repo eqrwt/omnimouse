@@ -1902,6 +1902,41 @@ class OmniMouseModel(Model):
             self._block_mask_cache[cache_key] = block_masks
         return block_masks
 
+    @staticmethod
+    def _validate_neuron_order(
+        order: Tensor, batch_size: int, population_size: int, device
+    ) -> Tensor:
+        """Normalise a `neuron_order_override` to (B, N) and check it is a permutation.
+
+        A silently malformed order does not crash -- it quietly scores the wrong
+        neurons, which is unrecoverable after the fact -- so this is checked on every
+        call rather than trusted. The permutation check is a sort of a (B, N) integer
+        tensor, negligible next to the forward pass it guards.
+        """
+        if not torch.is_tensor(order):
+            order = torch.as_tensor(order)
+        if not torch.is_floating_point(order) and order.dtype != torch.bool:
+            order = order.long()
+        else:
+            raise ValueError(
+                f"neuron_order_override must be an integer tensor, got {order.dtype}"
+            )
+        order = order.to(device)
+        if order.ndim == 1:
+            order = order.unsqueeze(0).expand(batch_size, -1)
+        if order.shape != (batch_size, population_size):
+            raise ValueError(
+                "neuron_order_override must have shape (N,) or (B, N) = "
+                f"({batch_size}, {population_size}), got {tuple(order.shape)}"
+            )
+        expected = torch.arange(population_size, device=device)
+        if not torch.equal(order.sort(dim=-1).values, expected.expand(batch_size, -1)):
+            raise ValueError(
+                "each row of neuron_order_override must be a permutation of "
+                f"arange({population_size}); got duplicate or out-of-range ids"
+            )
+        return order
+
     def forward(
         self,
         session_key: str,
@@ -1913,6 +1948,7 @@ class OmniMouseModel(Model):
         behavior_timestamps: Float[Tensor, "B S_beh"],
         masking_override: Optional[MaskingStrategy] = None,
         all_neurons_override: Optional[bool] = None,
+        neuron_order_override: Optional[Int[Tensor, "*B N"]] = None,
     ) -> OMModelOutput:
         """
         Forward pass.
@@ -1921,6 +1957,35 @@ class OmniMouseModel(Model):
          same order with every batch
         TODO: Support eval case where responses and timestamps not passed
          (and labels not needed).
+
+        Args:
+            neuron_order_override: optionally choose WHICH neurons are visible to the
+                encoder and which are reconstructed, instead of drawing them at random.
+
+                By default the model draws a fresh random permutation of the population
+                every forward pass, and the masking strategy then takes the first
+                ``n_visible_neurons`` of that permutation as encoder input and the last
+                ``max_n_reconstructed_neurons`` as decoder targets. Passing a permutation
+                here replaces the random draw, which makes the split *addressable*:
+
+                    order = cat([visible_ids, other_ids, target_ids])
+
+                Shape ``(N,)`` (shared by the batch) or ``(B, N)`` (per sample); dtype
+                must be integer, and each row must be a permutation of ``arange(N)``.
+
+                Useful for anything that needs a named rather than arbitrary population
+                split -- held-out-neuron evaluation, conditioning on an anatomical group,
+                scoring every neuron exactly once via disjoint target groups, or simply
+                making an evaluation reproducible without touching global RNG.
+
+                Note this is an ORDERING, not a mask: the counts still come from the
+                masking strategy. Two consequences worth knowing:
+                  * visible and target sets are the two ENDS of the order, so make the
+                    order long enough that they do not collide unless you want overlap.
+                  * ``max_population_size`` still truncates the order to its first
+                    ``max_neurons`` entries; pass ``all_neurons_override=True`` alongside
+                    when the population is larger than that cap and you need every
+                    neuron addressable.
         """
         # Tensor shapes
         (B, S, N), dev = responses.shape, responses.device
@@ -1983,8 +2048,23 @@ class OmniMouseModel(Model):
             )  # ((d_model) -> (1, 1, d_model)) + (B, 1, d_model) -> (B, 1, d_model)
 
         # -------------------- Responses Features / Queries ----------------------------
-        # Generate random permutation of neuron IDs, and gather using the random indices
-        if all_neurons_override is None or not all_neurons_override:
+        # Decide the neuron ORDER. The masking strategy slices this order: the first
+        #  `n_visible_neurons` become encoder input and the last
+        #  `max_n_reconstructed_neurons` become decoder targets. Three ways to set it:
+        #   1. explicit  -> caller names the split (see `neuron_order_override`)
+        #   2. random    -> fresh permutation per sample (the training default)
+        #   3. identity  -> population order untouched (`all_neurons_override`)
+        if neuron_order_override is not None:
+            neuron_ids = self._validate_neuron_order(neuron_order_override, B, N, dev)[
+                ..., :max_neurons
+            ]
+            shuffle = neuron_ids.unsqueeze(1).expand(
+                -1, S, -1
+            )  # (B, max_neurons) -> (B, S, max_neurons)
+            responses = torch.gather(responses, dim=-1, index=shuffle)
+            timestamps = torch.gather(timestamps, dim=-1, index=shuffle)
+        elif all_neurons_override is None or not all_neurons_override:
+            # Generate random permutation of neuron IDs, and gather using the random indices
             neuron_ids = torch.argsort(torch.rand(B, N, device=dev), dim=-1)[
                 ..., :max_neurons
             ]
@@ -2385,6 +2465,7 @@ class OmniMouseModel(Model):
         batch: Tuple[str, Dict[str, Tensor | Dict[str, Tensor]]],
         masking_override: Optional[MaskingStrategy] = None,
         all_neurons_override: Optional[bool] = None,
+        neuron_order_override: Optional[Int[Tensor, "*B N"]] = None,
     ) -> OMModelOutput:
         """
         Process a batch of data and run it through the model.
@@ -2398,6 +2479,11 @@ class OmniMouseModel(Model):
                     - screen (Tensor): Screen/video data
                     - eye_tracker (Tensor): Eye tracking data
                     - treadmill (Tensor): Treadmill data
+                    - neuron_order (Tensor, optional): per-batch neuron ordering,
+                      see `neuron_order_override` on `forward`. Letting the dataset
+                      supply it means a task can control the population split
+                      without changing any training or evaluation call site. The
+                      explicit `neuron_order_override` argument wins if both are given.
             masking_override: Optional joint masking strategy to use
 
         Returns:
@@ -2439,6 +2525,11 @@ class OmniMouseModel(Model):
         )
         behavior_timestamps = batch_data["timestamps"]["eye_tracker"]
 
+        # A dataset may carry the neuron ordering with the batch; an explicit argument
+        #  takes precedence over it.
+        if neuron_order_override is None:
+            neuron_order_override = batch_data.get("neuron_order")
+
         # Convert inputs to float32
         responses = responses.float()
         screen = screen.float()
@@ -2455,6 +2546,7 @@ class OmniMouseModel(Model):
             behavior_timestamps=behavior_timestamps,
             masking_override=masking_override,
             all_neurons_override=all_neurons_override,
+            neuron_order_override=neuron_order_override,
         )
 
     def state_dict(self, *args, **kwargs) -> Dict[str, Any]:
