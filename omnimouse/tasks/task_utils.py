@@ -43,6 +43,7 @@ from omnimouse.masking.strategies import (
 )
 from omnimouse.metrics import MaskedPopulationPearsonCorrCoef
 from omnimouse.modeling import Model, ModelArgs, OMModelOutput, build_model
+from omnimouse.utils import experanto_patch as _experanto_patch
 from omnimouse.optimization.schedulers import (
     LinearWarmupCosineAnnealingLR,
     LinearWarmupLR,
@@ -454,6 +455,23 @@ def setup_common(
 ]:
     """Common setup code for both training and evaluation."""
     rank, local_rank, world_size, device = setup_distributed()
+
+    # OPT-IN: expose `stim_type` / `image_class` / `condition_hash` to experanto
+    # `valid_condition` filters. Off by default, so no existing run changes behaviour.
+    # Needed to select individual stimulus classes or clips. See utils/experanto_patch.py
+    if cfg.data.get("expose_extra_meta_conditions", False):
+        _experanto_patch.apply()
+        log.info(
+            f"experanto extra meta conditions enabled: {_experanto_patch.EXTRA_META_KEYS}"
+        )
+    elif _experanto_patch.config_needs_extra_meta(cfg):
+        # Fail loudly rather than let the run die later with a bare KeyError.
+        raise ValueError(
+            "A `valid_condition` in this config filters on a key experanto does not expose "
+            f"by default (built-ins: {_experanto_patch.EXPERANTO_BUILTIN_KEYS}). "
+            "Set `data.expose_extra_meta_conditions: true` to enable "
+            f"{_experanto_patch.EXTRA_META_KEYS}."
+        )
 
     cuda_is_available = setup_cuda(
         enable_cudnn_sdp=cfg.trainer.enable_cudnn_sdp,
