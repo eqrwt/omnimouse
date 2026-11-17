@@ -1,0 +1,138 @@
+# @package _global_
+#
+# Out-of-distribution stimulus evaluation (Result 2).
+#
+# Trains/evaluates on the five Sensorium-2023 sessions, which are the only ones carrying
+# held-out `*_bonus` tiers with stimuli absent from the natural-movie training set.
+#
+# One eval phase per stimulus class, so the per-class breakdown falls out of the existing
+# metric keys with no change to run_evaluation. Each class is OR'd across both bonus tiers
+# because which tier holds a class differs by session (valid_condition is a sum-of-products:
+# list entries OR'd, keys within an entry AND'd -- experanto/datasets.py:583).
+#
+# REQUIRES the `stim_type` meta-condition patch (omnimouse/utils/experanto_patch.py), switched
+# on below with `data.expose_extra_meta_conditions: true`.
+#
+# Usable chunks measured on disk (sample_stride 30, pooled over the 5 sessions):
+#   Monet2 1607 · DotSequence 1529 · GaborGridSequence 1443 · RdkGridSequence 1432
+#   Frame 0 with include_blanks=false, ~1579 with true -- ImageNet-v2 trials are 0.5 s
+#   presentations inside 2 s chunks, so those chunks are image+blank mixtures. Kept, but
+#   must be described as such; it is not comparable to the four full-length video classes.
+
+defaults:
+  - /data/datasets@data.additional_validation_dataset_cfgs.natural: experanto_chunk_dataset
+  - /evaluation/masking_strategies@evaluation.natural_masking_strategies: test
+  - /data/datasets@data.additional_validation_dataset_cfgs.ood_gabor: experanto_chunk_dataset
+  - /evaluation/masking_strategies@evaluation.ood_gabor_masking_strategies: test
+  - /data/datasets@data.additional_validation_dataset_cfgs.ood_rdk: experanto_chunk_dataset
+  - /evaluation/masking_strategies@evaluation.ood_rdk_masking_strategies: test
+  - /data/datasets@data.additional_validation_dataset_cfgs.ood_dots: experanto_chunk_dataset
+  - /evaluation/masking_strategies@evaluation.ood_dots_masking_strategies: test
+  - /data/datasets@data.additional_validation_dataset_cfgs.ood_monet: experanto_chunk_dataset
+  - /evaluation/masking_strategies@evaluation.ood_monet_masking_strategies: test
+  - /data/datasets@data.additional_validation_dataset_cfgs.ood_imagenet: experanto_chunk_dataset
+  - /evaluation/masking_strategies@evaluation.ood_imagenet_masking_strategies: test
+  - _self_
+
+# Clear the default (legacy) masking strategies
+evaluation:
+  validation_masking_strategies: null
+  test_masking_strategies: null
+
+data:
+  # Clear the default (legacy) dataset configs
+  validation_datasets: null
+  validation_dataset: null
+  test_datasets: null
+  test_dataset: null
+
+  dataset_collection: sensorium_2023_test_set
+  # Required: every ood_* phase filters on stim_type, which experanto does not expose
+  # by default. Without this, setup_common raises a clear error.
+  expose_extra_meta_conditions: true
+
+  additional_validation_dataset_sets:
+    natural: sensorium_2023_test_set
+    ood_gabor: sensorium_2023_test_set
+    ood_rdk: sensorium_2023_test_set
+    ood_dots: sensorium_2023_test_set
+    ood_monet: sensorium_2023_test_set
+    ood_imagenet: sensorium_2023_test_set
+
+  additional_validation_dataset_cfgs:
+    # In-distribution reference: held-out natural movie. Every OOD number is read as a DROP
+    # from this, so it must use the same stride and blank handling as the OOD video phases.
+    natural:
+      modality_config:
+        screen:
+          sample_stride: 30
+          include_blanks: false
+          valid_condition:
+            - tier: validation
+              stim_type: stimulus.Clip
+
+    ood_gabor:
+      modality_config:
+        screen:
+          sample_stride: 30
+          include_blanks: false
+          valid_condition:
+            - tier: final_test_bonus
+              stim_type: stimulus.GaborGridSequence
+            - tier: live_test_bonus
+              stim_type: stimulus.GaborGridSequence
+
+    ood_rdk:
+      modality_config:
+        screen:
+          sample_stride: 30
+          include_blanks: false
+          valid_condition:
+            - tier: final_test_bonus
+              stim_type: stimulus.RdkGridSequence
+            - tier: live_test_bonus
+              stim_type: stimulus.RdkGridSequence
+
+    ood_dots:
+      modality_config:
+        screen:
+          sample_stride: 30
+          include_blanks: false
+          valid_condition:
+            - tier: final_test_bonus
+              stim_type: stimulus.DotSequence
+            - tier: live_test_bonus
+              stim_type: stimulus.DotSequence
+
+    ood_monet:
+      modality_config:
+        screen:
+          sample_stride: 30
+          include_blanks: false
+          valid_condition:
+            - tier: final_test_bonus
+              stim_type: stimulus.Monet2
+            - tier: live_test_bonus
+              stim_type: stimulus.Monet2
+
+    # include_blanks MUST be true here or this phase is empty (measured: 0 chunks without).
+    ood_imagenet:
+      modality_config:
+        screen:
+          sample_stride: 30
+          include_blanks: true
+          valid_condition:
+            - tier: final_test_bonus
+              stim_type: stimulus.Frame
+            - tier: live_test_bonus
+              stim_type: stimulus.Frame
+
+all_neurons_override: true
+
+eval_datasets:
+  - natural
+  - ood_gabor
+  - ood_rdk
+  - ood_dots
+  - ood_monet
+  - ood_imagenet

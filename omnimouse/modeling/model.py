@@ -816,6 +816,12 @@ class OmniMouseArgs(ModelArgs):
     # Video backbone selector: "hiera" (default) or "convnextv2" (drop-in alternative
     # sharing the same Conv3d patch-embed geometry -> identical token grid).
     video_backbone: str = "hiera"
+    # Optional path to a pretrained video-encoder state_dict (e.g. from MAE pretraining,
+    # see pretraining/mae). If set, model.hiera.backbone is initialized from it at build
+    # time; everything else stays random. None -> random-init encoder (the baseline).
+    hiera_init_ckpt: Optional[str] = None
+    # Freeze the video encoder (requires_grad=False) -- for frozen-encoder ablations.
+    freeze_hiera: bool = False
 
     # flex attention configs
     flex_attention_compile_config: Optional[Dict[str, Any]] = None
@@ -1080,6 +1086,34 @@ class OmniMouseModel(Model):
                 f"Unknown video_backbone '{config.video_backbone}' "
                 f"(expected 'hiera' or 'convnextv2')"
             )
+
+        # Optional: initialize the video encoder from a pretrained state_dict (e.g. MAE).
+        if config.hiera_init_ckpt:
+            sd = torch.load(config.hiera_init_ckpt, map_location="cpu")
+            if isinstance(sd, dict) and "model" in sd:  # full MAE ckpt -> take encoder.*
+                sd = {
+                    k[len("encoder.") :]: v
+                    for k, v in sd["model"].items()
+                    if k.startswith("encoder.")
+                }
+            missing, unexpected = self.hiera.backbone.load_state_dict(sd, strict=False)
+            # Non-strict on purpose (the MAE encoder has no projection head), so a
+            # silent mismatch is possible: always report the counts.
+            print(
+                f"[hiera] initialized video encoder from pretrained {config.hiera_init_ckpt} "
+                f"(missing={len(missing)}, unexpected={len(unexpected)})",
+                flush=True,
+            )
+            if missing or unexpected:
+                print(
+                    f"[hiera] WARNING pretrained-load key mismatch: "
+                    f"missing={missing[:4]} unexpected={unexpected[:4]}",
+                    flush=True,
+                )
+        if config.freeze_hiera:
+            for p in self.hiera.backbone.parameters():
+                p.requires_grad = False
+            print("[hiera] video encoder FROZEN (backbone requires_grad=False)", flush=True)
 
         # ------------------- Behavior feature extractor / readout ----------------------
 

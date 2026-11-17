@@ -1,0 +1,79 @@
+# @package _global_
+#
+# Result 2 training config: out-of-distribution stimulus generalisation.
+#
+# Same 5M model as omnimouse_5M, but trained ONLY on natural movie from the five
+# Sensorium-2023 sessions -- the only sessions carrying held-out `*_bonus` tiers with
+# stimuli absent from training. Evaluate with `eval_experiment=ood_bonus`.
+#
+# Why not reuse an existing checkpoint: every run on this cluster used `scaling_laws_8`,
+# which (a) contains none of these five sessions, so their per-session parameters do not
+# exist, and (b) carries Gabor / Monet2 / Frame trials labelled `train` -- those stimuli
+# are not out-of-distribution for those models at all.
+
+defaults:
+  - /model/masking_strategies: training
+  - _self_
+
+paths:
+  run_name: ood_result2
+  experiment_name: omnimouse-ood
+
+data:
+  dataset_collection: "sensorium_2023_test_set"
+  # MUST be [] and not null. pretraining_dataloaders.py:69-73 OVERWRITES a session's
+  # valid_condition with [{tier: train}, {tier: validation}] if it appears in this list --
+  # silently discarding the stim_type filter and training on the held-out stimuli.
+  # null falls back to `colossus`, which is exactly that hazard.
+  # These 5 sessions do not overlap scaling_laws_pretraining, but [] makes it structural.
+  pretraining_datasets: []
+  validation_datasets: "sensorium_2023_test_set"
+  test_datasets: "sensorium_2023_test_set"
+
+  # Required: the conditions below filter on `stim_type`, which experanto does not expose
+  # by default. See omnimouse/utils/experanto_patch.py
+  expose_extra_meta_conditions: true
+
+  train_dataset:
+    modality_config:
+      screen:
+        sample_stride: 1
+        # `stimulus.Clip` only. The train tier is NOT clean: 29623-4-9 carries 20 Frame +
+        # 7 Rdk + 3 Gabor trials labelled train, 29515-10-12 carries 4 Rdk + 2 Monet2 +
+        # 2 Dot, 29755-2-8 carries 1 Gabor. Without this filter, "stimuli the mouse never
+        # saw" would be false for three of the five sessions and the whole result is void.
+        valid_condition:
+          - tier: train
+            stim_type: stimulus.Clip
+
+  validation_dataset:
+    modality_config:
+      screen:
+        sample_stride: 60
+        include_blanks: true
+        # Same filter, so the in-distribution reference is natural movie only and directly
+        # comparable to the `natural` phase in eval_experiment/ood_bonus.yaml.
+        valid_condition:
+          - tier: validation
+            stim_type: stimulus.Clip
+
+  dataloader:
+    batch_size: 8
+
+model:
+  num_self_attends_per_block: 6
+  d_model: 256
+  num_heads: 4
+  hiera_stages: [2, 2]
+  local_to_global_ratio: [5, 1]
+
+trainer:
+  # Left at 1e6 so the LR schedule is IDENTICAL to every other run on this cluster; jobs
+  # stop at the wall clock and are compared at a matched step.
+  max_steps: 1000000
+  max_epochs: 5
+  # MEASURED ~0.9 s/it on 2 GPUs for these 5 sessions (~40k neurons total), so a 6 h job
+  # reaches ~24k steps -- NOT 1M. At the old 20000 a 2 h run produced zero validation points.
+  val_every_n_steps: 1000
+  # Checkpoint at the same cadence so the OOD eval can be run at a matched step across arms.
+  ckpt_every_n_steps: 1000

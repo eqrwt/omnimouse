@@ -1,0 +1,44 @@
+# @package _global_
+#
+# Sensorium 2022 benchmark, both tracks, from checkpoints that already exist.
+#
+# The 2022 tracks differ by INPUT, not stimulus:
+#   Main  (Sensorium)  = video only, no behavior   -> masking strategy `video_only`
+#   Bonus (Sensorium+) = video + behavior          -> masking strategy `video_behavior`
+# Both are produced by a single eval run, because `masking_strategies/test` contains both.
+#
+# The two 2022 test scans (26872-17-20, 27204-5-13) are inside `scaling_laws_8`, so any model
+# trained on that collection already has their per-session parameters and needs NO retraining.
+# Their held-out tier is `final_test` (the 2022 format has no main/bonus tiers).
+
+defaults:
+  - /data/datasets@data.additional_validation_dataset_cfgs.final_test: experanto_chunk_dataset
+  - /evaluation/masking_strategies@evaluation.final_test_masking_strategies: test
+  - _self_
+
+evaluation:
+  validation_masking_strategies: null
+  test_masking_strategies: null
+
+data:
+  validation_datasets: null
+  validation_dataset: null
+  test_datasets: null
+  test_dataset: null
+
+  dataset_collection: sensorium_2022_test_set
+  additional_validation_dataset_sets:
+    final_test: sensorium_2022_test_set
+  additional_validation_dataset_cfgs:
+    final_test:
+      modality_config:
+        screen:
+          sample_stride: 30
+          include_blanks: true
+          valid_condition:
+            - tier: final_test
+
+all_neurons_override: true
+
+eval_datasets:
+  - final_test

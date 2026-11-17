@@ -79,6 +79,12 @@ hiera_patch_padding: [2, 1, 3]
 hiera_sep_pos_embed: true
 hiera_drop_path_rate: 0.25
 hiera_mlp_ratio: 2.67
+# Pretrained video-encoder weights (e.g. MAE best_encoder.pt) are set with
+# `+model.hiera_init_ckpt=<path>`; unset means random init (OmniMouseArgs default). It is
+# deliberately NOT listed here with a null default: an experiment marks it required with
+# `???`, and OmegaConf does not let `???` override an existing value, so a null here would
+# turn "forgot the checkpoint" into a silent random-init run.
+freeze_hiera: false  # freeze the video encoder (frozen-encoder ablations)
 flex_attn_block_size: 128
 flex_attention_compile_config:
   fullgraph: false

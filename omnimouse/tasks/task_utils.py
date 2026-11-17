@@ -43,6 +43,7 @@ from omnimouse.masking.strategies import (
 )
 from omnimouse.metrics import MaskedPopulationPearsonCorrCoef
 from omnimouse.modeling import Model, ModelArgs, OMModelOutput, build_model
+from omnimouse.utils import experanto_patch as _experanto_patch
 from omnimouse.optimization.schedulers import (
     LinearWarmupCosineAnnealingLR,
     LinearWarmupLR,
@@ -455,6 +456,23 @@ def setup_common(
     """Common setup code for both training and evaluation."""
     rank, local_rank, world_size, device = setup_distributed()
 
+    # OPT-IN: expose `stim_type` / `image_class` / `condition_hash` to experanto
+    # `valid_condition` filters. Off by default, so no existing run changes behaviour.
+    # Needed to select individual stimulus classes or clips. See utils/experanto_patch.py
+    if cfg.data.get("expose_extra_meta_conditions", False):
+        _experanto_patch.apply()
+        log.info(
+            f"experanto extra meta conditions enabled: {_experanto_patch.EXTRA_META_KEYS}"
+        )
+    elif _experanto_patch.config_needs_extra_meta(cfg):
+        # Fail loudly rather than let the run die later with a bare KeyError.
+        raise ValueError(
+            "A `valid_condition` in this config filters on a key experanto does not expose "
+            f"by default (built-ins: {_experanto_patch.EXPERANTO_BUILTIN_KEYS}). "
+            "Set `data.expose_extra_meta_conditions: true` to enable "
+            f"{_experanto_patch.EXTRA_META_KEYS}."
+        )
+
     cuda_is_available = setup_cuda(
         enable_cudnn_sdp=cfg.trainer.enable_cudnn_sdp,
         deterministic=cfg.trainer.get("deterministic", None),
@@ -563,8 +581,31 @@ def create_optimizers(cfg, model) -> Tuple[Optimizer, Optimizer]:
 
     base_opt_fn = hydra.utils.instantiate(cfg.trainer.optimizer)
 
-    # Shared optimizer with base settings
-    shared_optimizer = base_opt_fn(model.shared_named_parameters())
+    # Shared optimizer with base settings.
+    # `trainer.encoder_lr` (default null) optionally puts the video encoder in its own param
+    # group at a different LR -- the "discriminative learning rate" setting, which lets a
+    # pretrained encoder adapt slowly instead of being either frozen or overwritten. The
+    # `hiera.` prefix covers the encoder for BOTH the Hiera and ConvNeXtV2 backbones (the
+    # attribute is named `hiera` either way).
+    encoder_lr = cfg.trainer.get("encoder_lr")
+    if encoder_lr is None:
+        shared_optimizer = base_opt_fn(model.shared_named_parameters())
+    else:
+        encoder_params, other_params = [], []
+        for _n, _p in model.shared_named_parameters():
+            (encoder_params if _n.startswith("hiera.") else other_params).append(_p)
+        if not encoder_params:
+            raise ValueError(
+                "trainer.encoder_lr is set but no parameters match the 'hiera.' prefix; "
+                "the video encoder is absent or has been renamed."
+            )
+        log.info(
+            f"Discriminative LR: {len(encoder_params)} encoder tensors at lr={encoder_lr}, "
+            f"{len(other_params)} other shared tensors at lr={cfg.trainer.optimizer.lr}"
+        )
+        shared_optimizer = base_opt_fn(
+            [{"params": encoder_params, "lr": encoder_lr}, {"params": other_params}]
+        )
 
     # Rank optimizer with conditional overrides
     rank_cfg = OmegaConf.create(cfg.trainer.optimizer)

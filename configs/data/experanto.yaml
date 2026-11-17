@@ -6,6 +6,9 @@ defaults:
 
 # references the names in "unraveling.experiments.scaling_laws"
 dataset_collection: "initial_32"
+# Expose `stim_type` / `image_class` / `condition_hash` to `valid_condition` filters
+# (experanto only exposes modality / valid_trial / tier). See omnimouse/utils/experanto_patch.py
+expose_extra_meta_conditions: false
 pretraining_datasets: "colossus"
 validation_datasets: null
 

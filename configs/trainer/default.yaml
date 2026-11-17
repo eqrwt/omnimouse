@@ -10,6 +10,11 @@ rank_weight_decay: 0.001  # Set to 1e-4 to override
 rank_betas: null          # Set to [0.95, 0.99] to override
 rank_eps: null            # Set to 1.e-6 to override
 
+# Video-encoder-specific LR (null = one param group, i.e. unchanged behaviour).
+# Set e.g. 7.e-5 to give the video encoder (hiera.*) a 10x lower LR than the rest of the
+# shared params. See task_utils.create_optimizers and docs/VIDEO_ENCODER.md.
+encoder_lr: null
+
 # End at whichever comes first:
 max_epochs: 6
 max_steps: null
