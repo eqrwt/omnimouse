@@ -17,7 +17,7 @@ paths:
   run_name: omnimouse_5M_mae_disclr
 
 model:
-  hiera_init_ckpt: ???  # required: MAE encoder weights
+  hiera_init_ckpt: ???  # required: MAE encoder weights (training stops if unset)
 
 trainer:
   encoder_lr: 7.e-5  # 10x below trainer.optimizer.lr (7e-4)
